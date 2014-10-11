@@ -1,0 +1,383 @@
+#!/bin/ksh
+#------------------------------------------------------------------------------
+#
+#   Programm        : ksh-template
+#
+#------------------------------------------------------------------------------
+#
+#   Beschreibung    : This script is a template for korn shell scripts. It is
+#                     intended to check all defined variables between CMD_START
+#                     and CMD_END if the commands are existing and whithin the
+#                     script it checks also that they realy are defined.
+#                     It has a build in log rotation and a loging machanism,
+#                     that log to a script related log or to the system log.
+#
+#   Author          : Marek Zavesicky
+#   Version         : $Revision: $
+#   Created         : 2011/08/13
+#   Last update     : $Date: $
+#
+#   $Id: $
+#   Change history  : See "git log"
+#
+#   This program is free software; you can redistribute it and/or modify it
+#   under the terms of the GNU General Public License as published by the
+#   Free Software Foundation; either version 2 of the License, or (at your
+#   option) any later version.  See <http://www.fsf.org/copyleft/gpl.txt>.
+#
+#   This program is distributed in the hope that it will be useful, but
+#   WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+#   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+#   for more details.
+#-------------------------------------------------------------------------------
+ 
+#-------------------------------------------------------------------------------
+#   Used external commands
+#-------------------------------------------------------------------------------
+# CMD_BEGIN
+CMD_DATE=/bin/date
+CMD_LOGGER=/usr/bin/logger
+CMD_MKDIR=/bin/mkdir
+CMD_MV=/bin/mv
+CMD_RM=/bin/rm
+CMD_STAT=/usr/bin/stat
+# CMD_END
+
+#-------------------------------------------------------------------------------
+#   Globale variables
+#-------------------------------------------------------------------------------
+# Use BSD instead of GNU if this script shall run on BSD like systems
+ARCH="GNU"
+PROG=${0##*/}
+BIN=${0%/*}
+if [ "$BIN" = "." ]
+then
+    BIN=$PWD
+else
+    cd $BIN
+    BIN=$PWD
+fi
+ETC=${BIN%/*}/etc
+VAR=${BIN%/*}/var
+LOGDIR=$VAR/log
+LOG=$LOGDIR/$PROG.log
+NULL=/dev/null
+CONFIGFILE=$ETC/$PROG.conf
+
+# Overwrite the following settings in the configuration file
+# SYSLOG: possible values NONE ERROR WARNING INFO
+SYSLOG="NONE"
+VERBOSE=0
+RETURN=""
+
+#-------------------------------------------------------------------------------
+#   Function        : help
+#-------------------------------------------------------------------------------
+#   Description     : Output of the usage message.
+#
+#   Input           : -         nonee
+#   Output          : -         none
+#-------------------------------------------------------------------------------
+function help
+{
+    echo "$PROG [ -hv ]"
+    echo "-h       print this help message"
+    echo "-v       print messages to standard out"
+    echo ""
+    exit 0
+}
+
+#-------------------------------------------------------------------------------
+#   Function        : checkDir
+#-------------------------------------------------------------------------------
+#   Description     : Check if the given directory by DIR is existing. If not,
+#                     create it. This function does not use the writeLog 
+#                     function, since it is used by writeLog, otherwise it could
+#                     generate an infinit loop.
+#
+#   Input           : DIR       name of the directory to check
+#   Output          : 0/1       okay = 0, failure = 1
+#-------------------------------------------------------------------------------
+function checkDir
+{
+    typeset DIR=$1
+
+    # Is DIR a directory and is it writable
+    if [ -d $DIR -a -w $DIR ]
+    then
+        return 0
+    # Does DIR exist
+    elif [ -e $DIR ]
+    then
+        return 1
+    # Try to create DIR
+    else
+        if [ -x "$CMD_MKDIR" ]
+        then
+            $CMD_MKDIR -p $DIR > $NULL 2>&1
+            return $?
+        else
+            return 1
+        fi
+    fi
+}
+
+#-------------------------------------------------------------------------------
+#   Function        : writeLog
+#-------------------------------------------------------------------------------
+#   Description     : Write log information. If argument -v is given, write to 
+#                     STDOUT.
+#
+#   Input           : LOG       name of the logfile
+#                     TYPE      type of the message (NONE, ERROR, WARNING, INFO)
+#                     MSG       the message to write
+#   Output          : -         none
+#-------------------------------------------------------------------------------
+function writeLog
+{
+    typeset LOG=$1; shift
+    typeset TYPE=$1; shift
+    typeset MSG=$@
+    typeset MSGT=""
+    typeset NOW=$($CMD_DATE '+%Y-%m-%d %H:%M:%S')
+    typeset -A MSG_TYPE
+    typeset -A SEVERITY
+
+    # Initialize message type and severity
+    MSG_TYPE["ERROR"]="user.err"
+    MSG_TYPE["WARNING"]="user.warning"
+    MSG_TYPE["INFO"]="user.info"
+
+    SEVERITY["ERROR"]=1
+    SEVERITY["WARNING"]=2
+    SEVERITY["INFO"]=3
+
+    # Here begins the syslog part
+    if [ -x "$CMD_LOGGER" -a "$SYSLOG" != "NONE" ]
+    then
+        if [ ${SEVERITY[$TYPE]} -le ${SEVERITY[$SYSLOG]} ]
+        then
+            $CMD_LOGGER -p ${MSG_TYPE[$TYPE]} -t [$PROG$$] "$TYPE $MSG"
+            if [ "$?" -ne "0" ]
+            then
+                # In case of an error write to standard out
+                echo "$NOW ERROR - $CMD_LOGGER returned a error"
+            fi
+        fi
+    fi
+
+    # Here begins the private log part
+    if checkDir ${LOG%/*}
+    then
+        echo "$NOW $TYPE - $MSG" >> $LOG
+    else
+        # If something gets wrong, this message will apear for every call of writeLog
+        echo "$NOW ERROR - Something ist wrong with the log directory ${LOG%/*}"
+        VERBOSE=1
+    fi
+
+    # Show messages in verbose mode or if mkdir is not available
+    if [ $VERBOSE -eq 1 ]
+    then
+        echo "$NOW $TYPE - $MSG"
+    fi
+}
+
+#-------------------------------------------------------------------------------
+#   Function        : checkCommands
+#-------------------------------------------------------------------------------
+#   Description     : Chek if all defined commands by CMD_* exists and if all of
+#                     does variables in the script body are defined.
+#
+#   Input           : -         none
+#   Output          : -         none
+#-------------------------------------------------------------------------------
+function checkCommands
+{
+    typeset CHKCMD=false
+    typeset CMDVAR=""
+    typeset CMDVAL=""
+    typeset LINE=""
+    typeset WORD=""
+    typeset RES=0
+    typeset -i LNO=0
+
+    while read LINE
+    do
+        LNO+=1
+        case $LINE in
+            *CMD_BEGIN)
+                CHKCMD=true
+            ;;
+            *CMD_END)
+                CHKCMD=false
+            ;;
+            *)
+                # See if all declared commands realy exist
+                if $CHKCMD
+                then
+                    if [ ! -x ${LINE##*=} ]
+                    then
+                        writeLog $LOG "ERROR" "${LINE##*=} - Command not found on line $LNO, check the path and adapt the script"
+                        unset ${LINE%%=*}
+                        RES=1
+                    else
+                        writeLog $LOG "INFO" "Variable ${LINE%%=*} on line $LNO has been initialized to ${LINE##*=}"
+                    fi
+                else
+                    # Check that all command variables are defined
+                    for WORD in $LINE
+                    do
+                        if [[ $WORD = @(*\$CMD_*|*\$\{CMD_*\}) ]]
+                        then
+                            CMDVAR=${WORD##*$}
+                            CMDVAR="$"${CMDVAR//[^A-Z0-9_]/}
+                            if [ -n "$CMDVAR" -a "$CMDVAR" != '$CMD_' ]
+                            then
+                                CMDVAL=$(eval echo $CMDVAR)
+                                if [ -x "$CMDVAL" -o -n "$CMDVAL" ]
+                                then
+                                    writeLog $LOG "INFO" "Variable $CMDVAR on line $LNO is set to $CMDVAL"
+                                else
+                                    writeLog $LOG "ERROR" "$CMDVAR on line $LNO is not set or not executable"
+                                    RES=1
+                                fi
+                            fi
+                        fi
+                    done
+                fi
+            ;;
+        esac
+    done <$BIN/$PROG
+    return $RES
+}
+
+#-------------------------------------------------------------------------------
+#   Function        : rotateFile
+#-------------------------------------------------------------------------------
+#   Description     : Index existing logfiles.
+#
+#   Input           : FILE      name of the logfile
+#                     MAXINDEX  max index
+#                     INDEX     actual index
+#   Output          : -         none
+#-------------------------------------------------------------------------------
+function rotateFile
+{
+    typeset FILE=$1
+    typeset MAXINDEX=$2
+    typeset -i INDEX=$3
+    typeset FILENAME=""
+    typeset -i NEWINDEX=$((INDEX+1))
+    typeset -i RET=0
+
+    if [ $INDEX -eq 0 ]
+    then
+        FILENAME=$FILE
+    else
+        FILENAME=$FILE.$INDEX
+    fi
+
+    if [ -f $FILENAME ]
+    then
+        writeLog $LOG "INFO" "Found logfile $FILENAME"
+        if [ $MAXINDEX -eq $INDEX ]
+        then
+            writeLog $LOG "INFO" "Remove old logfile $FILENAME"
+            $CMD_RM $FILE.$MAXINDEX
+            return $?
+        else
+            writeLog $LOG "INFO" "Logfile $FILENAME exist, go to next file"
+            rotateFile $FILE $MAXINDEX $NEWINDEX
+            RET=$?
+            if [ "$RET" -ne "0" ]
+            then
+                writeLog $LOG "ERROR" "Could not rotate logfiles check permissions"
+                return $RET
+            else
+                writeLog $LOG "INFO" "Move logfile $FILENAME to $FILE.$NEWINDEX"
+                $CMD_MV $FILENAME $FILE.$NEWINDEX
+                return $?
+            fi
+        fi
+    else
+        writeLog $LOG "INFO" "Logfile $FILENAME does not exist"
+        return 0
+    fi
+}
+
+#-------------------------------------------------------------------------------
+#   Function        : logRotate
+#-------------------------------------------------------------------------------
+#   Description     : Check the size of the logfile and rotate it if size 
+#                     exceeded LOG_SIZE
+#
+#   Input           : FILE      name of the logfile
+#                     MAXINDEX  max index
+#   Output          : -         none
+#-------------------------------------------------------------------------------
+function logRotate
+{
+    typeset FILE=$1
+    typeset -i MAXINDEX=$2
+    typeset -i SIZE=0
+
+    if [ -f $FILE -a -w $FILE ]
+    then
+        if [ "$ARCH" = "GNU" ]
+        then
+            SIZE=$($CMD_STAT -c '%s' $FILE)
+        else
+            SIZE=$($CMD_STAT -f '%z' $FILE)
+        fi
+        if [ $SIZE -gt $LOG_SIZE ]
+        then
+            rotateFile $FILE $MAXINDEX 0
+            return $?
+        fi
+    fi
+}
+
+#-------------------------------------------------------------------------------
+#   Main
+#-------------------------------------------------------------------------------
+while getopts hv OPT
+do
+    case $OPT in
+        h)
+            help
+        ;;
+        v)
+            VERBOSE=1
+        ;;
+        \?)
+            echo "Try '$0 -h' for more information."
+            exit 1
+        ;;
+        \:)
+            echo "Try '$0 -h' for more information."
+            exit 1
+        ;;
+    esac
+done
+shift `expr $OPTIND - 1`
+
+# Check all command variable initialization and definition
+if ! checkCommands
+then
+    writeLog $LOG "ERROR" "Some variables are not set or defined, exiting"
+    exit 1
+fi
+
+# Source the configuration file
+if [ -f $CONFIGFILE ]
+then
+    . $CONFIGFILE
+fi
+
+# Rotate logfiles or exit if there is a problem
+logRotate $LOG $ROTATE_LOGS || exit 1
+
+# Append youre code here
+echo "Hallo Welt :D"
+
