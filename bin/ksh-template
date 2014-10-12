@@ -7,9 +7,9 @@
 #
 #   Beschreibung    : This script is a template for korn shell scripts. It is
 #                     intended to check all defined variables between CMD_START
-#                     and CMD_END if the commands are existing and whithin the
-#                     script it checks also that they realy are defined.
-#                     It has a build in log rotation and a loging machanism,
+#                     and CMD_END if the commands are existing and within the
+#                     script it checks also that they really are defined.
+#                     It has a build in log rotation and a logging mechanism,
 #                     that log to a script related log or to the system log.
 #
 #   Author          : Marek Zavesicky
@@ -186,8 +186,8 @@ function writeLog
 #-------------------------------------------------------------------------------
 #   Function        : checkCommands
 #-------------------------------------------------------------------------------
-#   Description     : Chek if all defined commands by CMD_* exists and if all of
-#                     does variables in the script body are defined.
+#   Description     : Check if all defined commands by CMD_* exists and if all
+#                     of does variables in the script body are defined.
 #
 #   Input           : -         none
 #   Output          : -         none
