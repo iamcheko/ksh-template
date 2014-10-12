@@ -1,12 +1,12 @@
 ksh-template
 ============
 
-This is a simple korn shell template with logging machanism and builtin logrotation. All commands 
+This is a simple korn shell template with logging mechanism and builtin logrotation. All commands 
 that are defined between CMD_START and CMD_END, will be checked in two ways. First it will verify,
 that the command exists and it is executable. Second it also checks the body if all CMD_* variables
 are defined.
 
-This script comes with a config file, which is found in the etc folder. This config file is soured
+This script comes with a config file, which is found in the etc folder. This config file is sourced
 and not parsed, so you have to take care who has write permission to this file, since all code that
 is in this file gets executed.
 
